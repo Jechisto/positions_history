@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="cs">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bybit Trading Dashboard</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Roboto+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>My Bybit Portfolio</h1>
+        <div class="button-group">
+          <button class="button" onclick="getBalance()">
+            Aktualizovat zůstatek
+          </button>
+          <button class="button" onclick="getPositions()">
+            Aktualizovat pozice
+          </button>
+          <button class="button" onclick="getHistory()">Historie pozic</button>
+        </div>
+      </header>
+
+      <div class="dashboard-grid">
+        <div class="card">
+          <h2>Přehled účtu</h2>
+          <div id="balanceResult" class="result info">
+            <p>Klikněte na "Aktualizovat zůstatek" pro zobrazení dat.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Shrnutí otevřených pozic</h2>
+          <div id="positionsSummary" class="result info">
+            <p>Klikněte na "Aktualizovat pozice" pro zobrazení dat.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Detail otevřených pozic</h2>
+        <div class="positions-table-container">
+          <div id="positionsResult" class="result info">
+            <p>Žádné otevřené pozice k zobrazení.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-section">
+        <h2>Otevřít novou pozici (Limit Order)</h2>
+        <div class="form-group">
+          <label for="openSymbol">Symbol (např. BTCUSDT):</label>
+          <input type="text" id="openSymbol" value="BTCUSDT" />
+        </div>
+        <div class="form-group">
+          <label for="openSide">Strana:</label>
+          <select id="openSide">
+            <option value="Buy">Buy</option>
+            <option value="Sell">Sell</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="openQty">Velikost pozice:</label>
+          <input type="number" id="openQty" step="any" value="0.001" />
+        </div>
+        <div class="form-group">
+          <label for="openLeverage">Páka:</label>
+          <input type="number" id="openLeverage" value="1" />
+        </div>
+        <div class="form-group">
+          <label for="openPrice">Cena pro limit order:</label>
+          <input
+            type="number"
+            id="openPrice"
+            step="any"
+            placeholder="Aktuální cena"
+          />
+        </div>
+        <div class="form-actions">
+          <button class="button" onclick="openPosition()">
+            Otevřít pozici
+          </button>
+        </div>
+        <div id="openPositionResult" class="result"></div>
+      </div>
+
+      <div class="form-section">
+        <h2>Zavřít existující pozici (Market Order)</h2>
+        <div class="form-group">
+          <label for="closeSymbol">Symbol (např. BTCUSDT):</label>
+          <input type="text" id="closeSymbol" value="BTCUSDT" />
+        </div>
+        <div class="form-group">
+          <label for="closeQty">Velikost pozice k zavření:</label>
+          <input type="number" id="closeQty" step="any" value="0.001" />
+        </div>
+        <div class="form-actions">
+          <button class="button" onclick="closePosition()">
+            Zavřít pozici
+          </button>
+        </div>
+        <div id="closePositionResult" class="result"></div>
+      </div>
+
+      <div class="card">
+        <h2>Historie pozic</h2>
+        <div id="historyResult" class="result info">
+          <p>Klikněte na "Historie pozic" pro zobrazení archivovaných dat.</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Helper pro zobrazení zpráv
+      function displayMessage(elementId, message, type = "info") {
+        const resultDiv = document.getElementById(elementId);
+        resultDiv.className = `result ${type}`;
+        resultDiv.innerHTML = message;
+      }
+
+      async function fetchData(url, method = "GET", body = null) {
+        const options = {
+          method: method,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        };
+        if (body) {
+          options.body = JSON.stringify(body);
+        }
+        const response = await fetch(url, options);
+        const data = await response.json();
+        if (!response.ok) {
+          const errorMsg =
+            data.error || `HTTP error! Status: ${response.status}`;
+          throw new Error(errorMsg);
+        }
+        return data;
+      }
+
+      async function getBalance() {
+        displayMessage("balanceResult", "Načítám zůstatek...", "info");
+        try {
+          const data = await fetchData("/balance");
+          let balanceHtml = `
+                    <div class="balance-item"><span class="label">Celková hodnota (USD):</span> <span class="value">${parseFloat(
+                      data.total_equity
+                    ).toFixed(2)}</span></div>
+                    <div class="balance-item"><span class="label">Dostupný zůstatek (USD):</span> <span class="value">${parseFloat(
+                      data.available_balance
+                    ).toFixed(2)}</span></div>
+                    <div class="balance-item"><span class="label">Celková marže (USD):</span> <span class="value">${parseFloat(
+                      data.totalMargin
+                    ).toFixed(2)}</span></div>
+                    <div class="balance-item"><span class="label">Celkový zůstatek peněženky (USD):</span> <span class="value">${parseFloat(
+                      data.totalWalletBalance
+                    ).toFixed(2)}</span></div>
+                `;
+          if (data.coins && data.coins.length > 0) {
+            balanceHtml += "<h4>Detail mincí:</h4>";
+            data.coins.forEach((coin) => {
+              balanceHtml += `<div class="balance-item"><span class="label">${
+                coin.name
+              }:</span> <span class="value">${parseFloat(coin.balance).toFixed(
+                6
+              )}</span></div>`;
+            });
+          }
+          displayMessage("balanceResult", balanceHtml, "success");
+        } catch (error) {
+          displayMessage(
+            "balanceResult",
+            `Chyba při načítání zůstatku: ${error.message}`,
+            "error"
+          );
+        }
+      }
+
+      async function getPositions() {
+        displayMessage("positionsResult", "Načítám pozice...", "info");
+        displayMessage("positionsSummary", "Načítám shrnutí pozic...", "info");
+
+        try {
+          const data = await fetchData("/positions");
+          const positions = data.positions;
+          const summary = data.summary;
+
+          // Render detailní tabulka pozic
+          if (positions.length === 0) {
+            displayMessage("positionsResult", "Žádné otevřené pozice.", "info");
+          } else {
+            let positionsHtml =
+              "<table><thead><tr><th>Symbol</th><th>Strana</th><th>Velikost</th><th>Hodnota</th><th>PnL</th><th>Průměrná cena</th><th>Otevřeno</th></tr></thead><tbody>";
+            positions.forEach((pos) => {
+              const pnlClass =
+                parseFloat(pos.unrealized_pnl) >= 0 ? "positive" : "negative";
+              positionsHtml += `
+                            <tr>
+                                <td>${pos.symbol}</td>
+                                <td>${pos.side}</td>
+                                <td>${parseFloat(pos.size).toFixed(4)}</td>
+                                <td>${parseFloat(pos.positionValue).toFixed(
+                                  2
+                                )} ${summary.settlement_currency}</td>
+                                <td class="${pnlClass}">${parseFloat(
+                pos.unrealized_pnl
+              ).toFixed(2)} ${summary.settlement_currency}</td>
+                                <td>${parseFloat(pos.avgPrice).toFixed(4)}</td>
+                                <td>${pos.createdTime}</td>
+                            </tr>
+                        `;
+            });
+            positionsHtml += "</tbody></table>";
+            displayMessage("positionsResult", positionsHtml, "success");
+          }
+
+          // Render shrnutí pozic
+          let summaryHtml = `
+                    <p><span class="label">LONG expozice:</span> <span class="value">${
+                      summary.long_percentage
+                    }%</span> (${summary.long_symbols || "Žádné"})</p>
+                    <p><span class="label">SHORT expozice:</span> <span class="value">${
+                      summary.short_percentage
+                    }%</span> (${summary.short_symbols || "Žádné"})</p>
+                    <p><span class="label">Celkový nerealizovaný PnL:</span> <span class="value ${
+                      parseFloat(summary.total_pnl) >= 0
+                        ? "positive"
+                        : "negative"
+                    }">${summary.total_pnl} ${
+            summary.settlement_currency
+          }</span></p>
+                    <p><span class="label">Celkový zůstatek účtu:</span> <span class="value">${
+                      summary.total_equity
+                    } ${summary.settlement_currency}</span></p>
+                    <p><span class="label">Aktualizováno:</span> <span class="value">${new Date().toLocaleString(
+                      "cs-CZ"
+                    )}</span></p>
+                `;
+          displayMessage("positionsSummary", summaryHtml, "success");
+        } catch (error) {
+          displayMessage(
+            "positionsResult",
+            `Chyba při načítání pozic: ${error.message}`,
+            "error"
+          );
+          displayMessage(
+            "positionsSummary",
+            `Chyba při načítání shrnutí pozic: ${error.message}`,
+            "error"
+          );
+        }
+      }
+
+      async function openPosition() {
+        displayMessage("openPositionResult", "Otevírám pozici...", "info");
+        const symbol = document
+          .getElementById("openSymbol")
+          .value.toUpperCase();
+        const side = document.getElementById("openSide").value;
+        const qty = parseFloat(document.getElementById("openQty").value);
+        const leverage = parseInt(
+          document.getElementById("openLeverage").value
+        );
+        const price = parseFloat(document.getElementById("openPrice").value);
+
+        if (!symbol || isNaN(qty) || isNaN(price)) {
+          displayMessage(
+            "openPositionResult",
+            "Chyba: Zadejte symbol, platnou velikost a cenu.",
+            "error"
+          );
+          return;
+        }
+
+        try {
+          const data = await fetchData("/open_position", "POST", {
+            symbol,
+            side,
+            qty,
+            leverage,
+            price,
+          });
+          displayMessage(
+            "openPositionResult",
+            `Pozice ${symbol} (${side}) za ${qty} ${symbol} úspěšně otevřena. <br> ${JSON.stringify(
+              data.response,
+              null,
+              2
+            )}`,
+            "success"
+          );
+          await getPositions(); // Aktualizovat pozice po otevření
+        } catch (error) {
+          displayMessage(
+            "openPositionResult",
+            `Chyba při otevírání pozice: ${error.message}`,
+            "error"
+          );
+        }
+      }
+
+      async function closePosition() {
+        displayMessage("closePositionResult", "Zavírám pozici...", "info");
+        const symbol = document
+          .getElementById("closeSymbol")
+          .value.toUpperCase();
+        const qty = parseFloat(document.getElementById("closeQty").value);
+
+        if (!symbol || isNaN(qty)) {
+          displayMessage(
+            "closePositionResult",
+            "Chyba: Zadejte symbol a platnou velikost k zavření.",
+            "error"
+          );
+          return;
+        }
+
+        try {
+          const data = await fetchData("/close_position", "POST", {
+            symbol,
+            qty,
+          });
+          displayMessage(
+            "closePositionResult",
+            `Pozice ${symbol} (${qty} ${symbol}) úspěšně zavřena. <br> ${JSON.stringify(
+              data.response,
+              null,
+              2
+            )}`,
+            "success"
+          );
+          await getPositions(); // Aktualizovat pozice po zavření
+        } catch (error) {
+          displayMessage(
+            "closePositionResult",
+            `Chyba při zavírání pozice: ${error.message}`,
+            "error"
+          );
+        }
+      }
+
+      async function getHistory() {
+        displayMessage("historyResult", "Načítám historii pozic...", "info");
+        try {
+          const data = await fetchData("/history");
+          if (data.length === 0) {
+            displayMessage(
+              "historyResult",
+              "Historie pozic je prázdná.",
+              "info"
+            );
+            return;
+          }
+
+          let historyHtml = "<h3>Historie pozic (posledních 5 záznamů):</h3>";
+          // Zobraz posledních 5 unikátních záznamů (kvůli struktuře s datumem a časem)
+          const recentEntries = data.slice(-5).reverse(); // Získat posledních 5 a otočit pro nejnovější nahoře
+
+          recentEntries.forEach((entry) => {
+            // Každý záznam v historii může mít klíč pro datum a vnořený klíč pro čas
+            for (const dateKey in entry) {
+              for (const timeKey in entry[dateKey]) {
+                const record = entry[dateKey][timeKey];
+                historyHtml += `<div class="history-entry">`;
+                historyHtml += `<p><span class="label">Datum & Čas:</span> <span class="value">${dateKey} ${timeKey}</span></p>`;
+                historyHtml += `<p><span class="label">Long expozice:</span> <span class="value">${
+                  record.summary.long_percentage
+                }%</span> (${record.summary.long_symbols || "Žádné"})</p>`;
+                historyHtml += `<p><span class="label">Short expozice:</span> <span class="value">${
+                  record.summary.short_percentage
+                }%</span> (${record.summary.short_symbols || "Žádné"})</p>`;
+                historyHtml += `<p><span class="label">Celkový nerealizovaný PnL:</span> <span class="value ${
+                  parseFloat(record.summary.total_pnl) >= 0
+                    ? "positive"
+                    : "negative"
+                }">${record.summary.total_pnl} ${
+                  record.summary.settlement_currency
+                }</span></p>`;
+                historyHtml += `<p><span class="label">Celkový zůstatek:</span> <span class="value">${record.summary.total_equity} ${record.summary.settlement_currency}</span></p>`;
+                historyHtml += `</div>`;
+              }
+            }
+          });
+          displayMessage("historyResult", historyHtml, "success");
+        } catch (error) {
+          displayMessage(
+            "historyResult",
+            `Chyba při načítání historie: ${error.message}`,
+            "error"
+          );
+        }
+      }
+
+      // Automatické načtení dat při prvním spuštění
+      document.addEventListener("DOMContentLoaded", () => {
+        getBalance();
+        getPositions();
+      });
+    </script>
+  </body>
+</html>
