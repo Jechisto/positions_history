@@ -374,11 +374,40 @@
             displayMessage('historyResult', `Chyba při načítání historie: ${error.message}`, 'error');
         }
     }
-      // Automatické načtení dat při prvním spuštění
-      document.addEventListener("DOMContentLoaded", () => {
-        getBalance();
-        getPositions();
-      });
+    
+      async function getSchedulerInterval() {
+            try {
+                const data = await fetchData('/scheduler_interval');
+                document.getElementById('intervalMinutes').value = data.interval_minutes;
+            } catch (error) {
+                console.error("Chyba při načítání intervalu plánovače:", error.message);
+            }
+        }
+
+      async function updateSchedulerInterval() {
+            const resultDiv = document.getElementById('schedulerIntervalResult');
+            resultDiv.innerHTML = 'Aktualizuji interval...';
+            const newInterval = parseInt(document.getElementById('intervalMinutes').value);
+
+            if (isNaN(newInterval) || newInterval <= 0) {
+                displayMessage('schedulerIntervalResult', 'Chyba: Zadejte platné kladné číslo pro interval.', 'error');
+                return;
+            }
+
+            try {
+                const data = await fetchData('/scheduler_interval', 'POST', { interval_minutes: newInterval });
+                displayMessage('schedulerIntervalResult', `Interval úspěšně nastaven na ${newInterval} minut.`, 'success');
+            } catch (error) {
+                displayMessage('schedulerIntervalResult', `Chyba při nastavování intervalu: ${error.message}`, 'error');
+            }
+        }
+
+        // Automatické načtení dat při prvním spuštění
+        document.addEventListener('DOMContentLoaded', () => {
+            getBalance();
+            getPositions();
+            getSchedulerInterval(); // Načíst aktuální interval
+        });
     </script>
   </body>
 </html>
