@@ -92,6 +92,18 @@
       </div>
 
       <div class="form-section">
+            <h2>Nastavení automatického ukládání</h2>
+            <div class="form-group">
+                <label for="intervalMinutes">Interval ukládání (minuty, např. 15, 60, 240):</label>
+                <input type="number" id="intervalMinutes" value="60" min="1">
+            </div>
+            <div class="form-actions">
+                <button class="button" onclick="updateSchedulerInterval()">Nastavit interval</button>
+            </div>
+            <div id="schedulerIntervalResult" class="result"></div>
+      </div>
+
+      <div class="form-section">
         <h2>Zavřít existující pozici (Market Order)</h2>
         <div class="form-group">
           <label for="closeSymbol">Symbol (např. BTCUSDT):</label>
@@ -411,3 +423,4 @@
     </script>
   </body>
 </html>
+

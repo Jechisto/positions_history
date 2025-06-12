@@ -34,3 +34,4 @@ logs/
 *.tar
 
 positions_history.json
+instance/trading_history.db
