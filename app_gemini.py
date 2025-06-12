@@ -7,10 +7,14 @@ from dotenv import load_dotenv
 import logging
 from datetime import datetime
 import json
-import time  # Pro krátké zpoždění
+import time
 from dataclasses import dataclass
 
-# Nastavení loggingu
+# SQLAlchemy importy
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import desc # Pro řazení dotazů
+
+# Nastavení loggingu (beze změny)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -20,20 +24,15 @@ logging.basicConfig(
     ]
 )
 
-# Dataclass pro konfiguraci obchodování
-
-
-# Dataclass pro konfiguraci obchodování
-@dataclass  # <-- Důležité je mít tu dekorátor
+# Dataclass pro konfiguraci obchodování (beze změny)
+@dataclass
 class TradingConfig:
     testnet: bool = False
     default_leverage: int = 1
     default_category: str = "linear"
     time_in_force: str = "GTC"
 
-# Třída pro interakci s Bybit API
-
-
+# Třída pro interakci s Bybit API (beze změny)
 class BybitTrader:
     def __init__(self, config: TradingConfig):
         load_dotenv()
@@ -125,7 +124,7 @@ class BybitTrader:
                 else:
                     raise
 
-            time.sleep(0.5)  # Krátké zpoždění
+            time.sleep(0.5) # Krátké zpoždění
 
             if price is None:
                 raise ValueError("Pro limit order musíte zadat cenu.")
@@ -140,8 +139,7 @@ class BybitTrader:
                 timeInForce=self.config.time_in_force,
                 positionIdx="1"
             )
-            logging.info(
-                f"Pozice úspěšně otevřena: {symbol} {side} {qty} za cenu {price}.")
+            logging.info(f"Pozice úspěšně otevřena: {symbol} {side} {qty} za cenu {price}.")
             return response
         except Exception as e:
             logging.error(f"Chyba při otevírání pozice: {e}")
@@ -149,11 +147,29 @@ class BybitTrader:
 
     def close_position(self, symbol: str, qty: float) -> Dict:
         try:
+            # Před zavřením pozice získáme aktuální stranu pozice, pokud existuje
+            current_positions = self.get_open_positions()
+            position_to_close_side = None
+            for p in current_positions:
+                if p['symbol'] == symbol:
+                    position_to_close_side = p['side']
+                    break
+            
+            # Pokud se pozice nenašla, předpokládáme opak vstupu
+            if position_to_close_side == "Buy":
+                close_side = "Sell"
+            elif position_to_close_side == "Sell":
+                close_side = "Buy"
+            else:
+                # Fallback, pokud se pozice nenašla nebo není jasné, jakou stranu zavřít
+                logging.warning(f"Nelze určit stranu pozice pro zavření {symbol}. Používám 'Buy' pro Sell a 'Sell' pro Buy (výchozí).")
+                # Toto je spíše provizorní, ideálně by se mělo přesně vědět, co se zavírá
+                close_side = "Sell" # Předpokládáme, že zavíráme long pozici tržním prodejem
+
             response = self.session.place_order(
                 category=self.config.default_category,
                 symbol=symbol,
-                side="Sell" if self._get_position_side(
-                    symbol) == "Buy" else "Buy",  # Dynamicky určí stranu pro zavření
+                side=close_side, # Dynamicky určená strana
                 orderType="Market",
                 qty=str(qty),
                 timeInForce=self.config.time_in_force,
@@ -165,40 +181,68 @@ class BybitTrader:
             logging.error(f"Chyba při zavírání pozice: {e}")
             raise
 
-    def _get_position_side(self, symbol: str) -> Optional[str]:
-        """Pomocná metoda pro zjištění strany otevřené pozice."""
-        positions = self.get_open_positions()
-        for pos in positions:
-            if pos['symbol'] == symbol:
-                return pos['side']
-        return None
-
 
 # --- Flask Web Application ---
 app = Flask(__name__)
-# Není potřeba předávat argumenty, dataclass si to zařídí automaticky
-# Použije se výchozí hodnota pro 'testnet' (False)
-config = TradingConfig()
+
+# Konfigurace databáze SQLite
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///trading_history.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # Vypnout, aby se neodesílaly signály aplikaci, což šetří paměť
+
+db = SQLAlchemy(app)
+
+# Databázový model pro ukládání historie pozic
+class PositionRecord(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Souhrnné informace
+    total_equity = db.Column(db.String(50))
+    total_long_value = db.Column(db.String(50))
+    total_short_value = db.Column(db.String(50))
+    long_percentage = db.Column(db.String(10))
+    short_percentage = db.Column(db.String(10))
+    long_symbols = db.Column(db.String(500))
+    short_symbols = db.Column(db.String(500))
+    settlement_currency = db.Column(db.String(10))
+    total_pnl = db.Column(db.String(50))
+
+    # Detailní pozice (uložíme jako JSON string)
+    positions_json = db.Column(db.Text)
+
+    def __repr__(self):
+        return f"<PositionRecord {self.timestamp} - Equity: {self.total_equity}>"
+
+    def to_dict(self):
+            """Převede záznam databáze na slovník pro JSON serializaci."""
+            return {
+                'timestamp': self.timestamp.strftime('%Y-%m-%d %H:%M:%S'),
+                'summary': {
+                    'total_equity': self.total_equity,
+                    'total_long_value': self.total_long_value,
+                    'total_short_value': self.total_short_value,
+                    'long_percentage': self.long_percentage, # <--- ZDE
+                    'short_percentage': self.short_percentage, # <--- ZDE
+                    'long_symbols': self.long_symbols,
+                    'short_symbols': self.short_symbols,
+                    'settlement_currency': self.settlement_currency,
+                    'total_pnl': self.total_pnl
+                },
+                'positions': json.loads(self.positions_json) if self.positions_json else []
+            }
+
+
+# Inicializace BybitTrader
+config = TradingConfig(testnet=False)
 try:
     trader = BybitTrader(config)
 except ValueError as e:
     logging.critical(f"Aplikace nemůže být spuštěna: {e}")
-    trader = None  # Aby aplikace nespadla hned
+    trader = None
 
-# Trvalé ukládání historie pozic
-POSITIONS_HISTORY_FILE = 'positions_history.json'
-
-
-def load_positions_history():
-    if os.path.exists(POSITIONS_HISTORY_FILE):
-        with open(POSITIONS_HISTORY_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return []
-
-
-def save_positions_history(data):
-    with open(POSITIONS_HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+# Context processor pro vytvoření DB tabulek při prvním požadavku (nebo manuálně)
+with app.app_context():
+    db.create_all()
 
 
 @app.route('/')
@@ -207,17 +251,29 @@ def index():
         return render_template('error.html', message="Chyba inicializace API. Zkontrolujte prosím .env soubor.")
     return render_template('index.html')
 
-
 @app.route('/balance', methods=['GET'])
 def get_balance():
     if not trader:
         return jsonify({"error": "Trading client not initialized."}), 500
     try:
         balance = trader.get_account_balance()
+        # Převést Decimal hodnoty na stringy pro JSON serializaci
+        for key in ['total_equity', 'available_balance', 'totalMargin', 'totalWalletBalance']:
+            if key in balance and isinstance(balance[key], Decimal):
+                balance[key] = str(balance[key])
+            elif key in balance and balance[key] == 'N/A': # Handling N/A z API
+                 balance[key] = '0.00' # Nebo jiná výchozí hodnota pro zobrazení
+        
+        if 'coins' in balance:
+            for coin in balance['coins']:
+                if 'balance' in coin and isinstance(coin['balance'], Decimal):
+                    coin['balance'] = str(coin['balance'])
+                elif 'balance' in coin and coin['balance'] == 'N/A':
+                    coin['balance'] = '0.000000'
+
         return jsonify(balance)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route('/positions', methods=['GET'])
 def get_positions():
@@ -236,9 +292,12 @@ def get_positions():
         short_positions_detailed = []
 
         balance_info = trader.get_account_balance()
-        total_equity = Decimal(balance_info.get('total_equity', '0'))
+        total_equity_str = balance_info.get('total_equity', '0')
+        total_equity = Decimal(total_equity_str if total_equity_str != 'N/A' else '0')
+
 
         for pos in positions:
+            # Ujisti se, že data jsou typu string pro Decimal konverzi
             position_value = Decimal(str(abs(float(pos['positionValue']))))
             unrealized_pnl = Decimal(str(pos['unrealized_pnl']))
             total_pnl += unrealized_pnl
@@ -252,10 +311,8 @@ def get_positions():
                 short_symbols.append(pos['symbol'].replace('USDT', ''))
                 short_positions_detailed.append(pos)
 
-        long_percentage = (total_long_value / total_equity) * \
-            100 if total_equity > 0 else 0
-        short_percentage = (total_short_value / total_equity) * \
-            100 if total_equity > 0 else 0
+        long_percentage = (total_long_value / total_equity) * 100 if total_equity > 0 else Decimal('0.00')
+        short_percentage = (total_short_value / total_equity) * 100 if total_equity > 0 else Decimal('0.00')
 
         summary = {
             'total_long_value': f"{total_long_value:.2f}",
@@ -269,22 +326,26 @@ def get_positions():
             'total_equity': f"{total_equity:.2f}"
         }
 
-        # Save to history
-        current_date_str = datetime.now().strftime("%Y-%m-%d")
-        current_time_str = datetime.now().strftime("%H:%M:%S")
-
-        export_data = {
-            current_date_str: {
-                current_time_str: {
-                    'long_positions': long_positions_detailed,
-                    'short_positions': short_positions_detailed,
-                    'summary': summary
-                }
-            }
-        }
-        history = load_positions_history()
-        history.append(export_data)
-        save_positions_history(history)
+        # Uložení do databáze
+        try:
+            new_record = PositionRecord(
+                total_equity=summary['total_equity'],
+                total_long_value=summary['total_long_value'],
+                total_short_value=summary['total_short_value'],
+                long_percentage=summary['long_percentage'],
+                short_percentage=summary['short_percentage'],
+                long_symbols=summary['long_symbols'],
+                short_symbols=summary['short_symbols'],
+                settlement_currency=summary['settlement_currency'],
+                total_pnl=summary['total_pnl'],
+                positions_json=json.dumps(positions) # Uložíme detailní pozice jako JSON string
+            )
+            db.session.add(new_record)
+            db.session.commit()
+            logging.info("Historie pozic uložena do databáze.")
+        except Exception as db_e:
+            db.session.rollback() # Vrácení transakce v případě chyby
+            logging.error(f"Chyba při ukládání historie pozic do databáze: {db_e}")
 
         return jsonify({
             "positions": positions,
@@ -293,7 +354,6 @@ def get_positions():
     except Exception as e:
         logging.error(f"Chyba při získávání pozic pro web: {e}")
         return jsonify({"error": str(e)}), 500
-
 
 @app.route('/open_position', methods=['POST'])
 def open_position():
@@ -304,7 +364,7 @@ def open_position():
     side = data.get('side')
     qty = float(data.get('qty'))
     leverage = int(data.get('leverage', config.default_leverage))
-    price = float(data.get('price'))  # Cena je pro limit order povinná
+    price = float(data.get('price')) 
 
     if not all([symbol, side, qty, price]):
         return jsonify({"error": "Všechna pole (symbol, side, qty, price) jsou povinná."}), 400
@@ -314,7 +374,6 @@ def open_position():
         return jsonify({"message": "Pozice úspěšně otevřena.", "response": response})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @app.route('/close_position', methods=['POST'])
 def close_position():
@@ -333,15 +392,20 @@ def close_position():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
 @app.route('/history', methods=['GET'])
 def get_history():
     try:
-        history = load_positions_history()
-        return jsonify(history)
+        history_records = PositionRecord.query.order_by(desc(PositionRecord.timestamp)).limit(5).all()
+        history_data = [record.to_dict() for record in history_records] # <--- ZDE se používá to_dict()
+        
+        return jsonify(history_data)
     except Exception as e:
-        return jsonify({"error": f"Chyba při načítání historie: {e}"}), 500
-
+        return jsonify({"error": f"Chyba při načítání historie z databáze: {e}"}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True)  # debug=True pro vývoj, v produkci nastavit na False
+    # Vytvoří tabulky v databázi, pokud ještě neexistují.
+    # Toto by mělo být provedeno před spuštěním aplikace
+    # Pokud spustíš aplikaci poprvé, smaž soubor trading_history.db, aby se vytvořil nový prázdný.
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True)

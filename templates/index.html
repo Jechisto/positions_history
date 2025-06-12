@@ -347,57 +347,33 @@
       }
 
       async function getHistory() {
-        displayMessage("historyResult", "Načítám historii pozic...", "info");
+        displayMessage('historyResult', 'Načítám historii pozic...', 'info');
         try {
-          const data = await fetchData("/history");
-          if (data.length === 0) {
-            displayMessage(
-              "historyResult",
-              "Historie pozic je prázdná.",
-              "info"
-            );
-            return;
-          }
-
-          let historyHtml = "<h3>Historie pozic (posledních 5 záznamů):</h3>";
-          // Zobraz posledních 5 unikátních záznamů (kvůli struktuře s datumem a časem)
-          const recentEntries = data.slice(-5).reverse(); // Získat posledních 5 a otočit pro nejnovější nahoře
-
-          recentEntries.forEach((entry) => {
-            // Každý záznam v historii může mít klíč pro datum a vnořený klíč pro čas
-            for (const dateKey in entry) {
-              for (const timeKey in entry[dateKey]) {
-                const record = entry[dateKey][timeKey];
-                historyHtml += `<div class="history-entry">`;
-                historyHtml += `<p><span class="label">Datum & Čas:</span> <span class="value">${dateKey} ${timeKey}</span></p>`;
-                historyHtml += `<p><span class="label">Long expozice:</span> <span class="value">${
-                  record.summary.long_percentage
-                }%</span> (${record.summary.long_symbols || "Žádné"})</p>`;
-                historyHtml += `<p><span class="label">Short expozice:</span> <span class="value">${
-                  record.summary.short_percentage
-                }%</span> (${record.summary.short_symbols || "Žádné"})</p>`;
-                historyHtml += `<p><span class="label">Celkový nerealizovaný PnL:</span> <span class="value ${
-                  parseFloat(record.summary.total_pnl) >= 0
-                    ? "positive"
-                    : "negative"
-                }">${record.summary.total_pnl} ${
-                  record.summary.settlement_currency
-                }</span></p>`;
-                historyHtml += `<p><span class="label">Celkový zůstatek:</span> <span class="value">${record.summary.total_equity} ${record.summary.settlement_currency}</span></p>`;
-                historyHtml += `</div>`;
-              }
+            const data = await fetchData('/history'); // 'data' je nyní pole objektů PositionRecord.to_dict()
+            if (data.length === 0) {
+                displayMessage('historyResult', 'Historie pozic je prázdná.', 'info');
+                return;
             }
-          });
-          displayMessage("historyResult", historyHtml, "success");
-        } catch (error) {
-          displayMessage(
-            "historyResult",
-            `Chyba při načítání historie: ${error.message}`,
-            "error"
-          );
-        }
-      }
 
+            let historyHtml = '<h3>Historie pozic (posledních 5 záznamů):</h3>';
+            // Procházíme přímo pole 'data'
+            data.forEach(record => { // Každý 'record' je objekt vrácený z PositionRecord.to_dict()
+                const summary = record.summary; // Získáme přímo objekt summary
+                const timestamp = record.timestamp; // Získáme timestamp
+
+                historyHtml += `<div class="history-entry">`;
+                historyHtml += `<p><span class="label">Datum & Čas:</span> <span class="value">${timestamp}</span></p>`;
+                historyHtml += `<p><span class="label">Long expozice:</span> <span class="value">${summary.long_percentage}%</span> (${summary.long_symbols || 'Žádné'})</p>`;
+                historyHtml += `<p><span class="label">Short expozice:</span> <span class="value">${summary.short_percentage}%</span> (${summary.short_symbols || 'Žádné'})</p>`;
+                historyHtml += `<p><span class="label">Celkový nerealizovaný PnL:</span> <span class="value ${parseFloat(summary.total_pnl) >= 0 ? 'positive' : 'negative'}">${summary.total_pnl} ${summary.settlement_currency}</span></p>`;
+                historyHtml += `<p><span class="label">Celkový zůstatek:</span> <span class="value">${summary.total_equity} ${summary.settlement_currency}</span></p>`;
+                historyHtml += `</div>`;
+            });
+            displayMessage('historyResult', historyHtml, 'success');
+        } catch (error) {
+            displayMessage('historyResult', `Chyba při načítání historie: ${error.message}`, 'error');
+        }
+    }
       // Automatické načtení dat při prvním spuštění
       document.addEventListener("DOMContentLoaded", () => {
         getBalance();
